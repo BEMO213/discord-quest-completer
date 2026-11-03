@@ -321,25 +321,6 @@ fn make_macos_app_bundle(
     Ok(target_executable_path)
 }
 
-fn launch_executable_path(game_folder_path: &Path, executable_name: &str) -> PathBuf {
-    if is_app_bundle(executable_name) {
-        game_folder_path
-            .join(executable_name)
-            .join("Contents/MacOS")
-            .join(bundle_binary_name(executable_name))
-    } else {
-        game_folder_path.join(executable_name)
-    }
-}
-
-fn stop_process_name(exec_name: &str) -> String {
-    if is_app_bundle(exec_name) {
-        bundle_binary_name(exec_name)
-    } else {
-        exec_name.to_string()
-    }
-}
-
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
