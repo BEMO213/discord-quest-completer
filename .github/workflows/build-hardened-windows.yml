@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - security/hardened-windows-build
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
