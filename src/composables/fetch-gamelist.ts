@@ -120,13 +120,13 @@ export function useFetchGameList() {
         const bundledIsValid = isValidGameList(bundledGameList.value);
 
         if (mirrorIsValid) {
-            gameDB.value = gameListGHMirror.value;
+            gameDB.value = gameListGHMirror.value as Game[];
             addLog('Using game list from GitHub mirror. ' + gameDB.value.length + ' entries.');
         } else if (discordIsValid) {
-            gameDB.value = gameListFromDiscord.value;
+            gameDB.value = gameListFromDiscord.value as Game[];
             addLog('Using game list from Discord. ' + gameDB.value.length + ' entries.');
         } else if (bundledIsValid) {
-            gameDB.value = bundledGameList.value;
+            gameDB.value = bundledGameList.value as Game[];
             addLog('Using bundled game list as fallback. ' + gameDB.value.length + ' entries.');
         } else {
             fetchError.value = 'All game-list sources returned unavailable or invalid data.';
