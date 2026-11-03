@@ -74,8 +74,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             POINT cur; GetCursorPos(&cur);
             HMENU hMenu = CreatePopupMenu();
             InsertMenuW(hMenu, 0, MF_BYPOSITION | MF_STRING, ID_TRAY_TOGGLE, IsWindowVisible(hWnd) ? L"Hide" : L"Show");
-            InsertMenuW(hMenu, 2, MF_SEPARATOR, 0, NULL);
-            InsertMenuW(hMenu, 3, MF_BYPOSITION | MF_STRING, ID_TRAY_EXIT, L"Exit");
+            InsertMenuW(hMenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, NULL);
+            InsertMenuW(hMenu, 2, MF_BYPOSITION | MF_STRING, ID_TRAY_EXIT, L"Exit");
             SetForegroundWindow(hWnd);
             TrackPopupMenu(hMenu, TPM_BOTTOMALIGN | TPM_LEFTALIGN, cur.x, cur.y, 0, hWnd, NULL);
             DestroyMenu(hMenu);
@@ -128,6 +128,12 @@ extern "C" void mainEntryPoint() {
     f_CreateFontW = (P_CreateFontW)GetProcAddress(hGdi32, "CreateFontW");
     f_DeleteObject = (P_DeleteObject)GetProcAddress(hGdi32, "DeleteObject");
     P_CreateWindowExW f_CreateWindowExW = (P_CreateWindowExW)GetProcAddress(hUser32, "CreateWindowExW");
+
+    if (!hShell32 || !hGdi32 || !hUser32 ||
+        !f_Shell_NotifyIconW || !f_ShellExecuteW ||
+        !f_CreateFontW || !f_DeleteObject || !f_CreateWindowExW) {
+        ExitProcess(1);
+    }
 
     LPWSTR lpCmdLine = GetCommandLineW();
     const wchar_t* flag = L"--title";
