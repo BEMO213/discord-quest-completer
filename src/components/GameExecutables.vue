@@ -38,15 +38,17 @@
 
                 <div class="justify-self-end">
                     <button class="text-white rounded-md px-3 py-1"
+                    :disabled="executable.is_starting"
                     :class="[
                         {
                             'bg-blue-500 hover:bg-blue-600': !gameActions?.isExecutableRunning(executable),
                             'bg-red-500 hover:bg-red-600': gameActions?.isExecutableRunning(executable),
+                            'opacity-60 cursor-wait': executable.is_starting,
                         },
                     ]"
                         @click="handleLaunch(executable)"
                     >
-                        {{ gameActions?.isExecutableRunning(executable) ? 'Stop' : 'Play' }}
+                        {{ executable.is_starting ? 'Starting...' : (gameActions?.isExecutableRunning(executable) ? 'Stop' : 'Play') }}
                     </button>
                 </div>
             </div>
@@ -158,7 +160,10 @@ function getFilename(executable: GameExecutable) {
 }
 
 function handleLaunch(executable: GameExecutable) {
-    // Handle the launch logic here
+    // Ignore repeated clicks while the install or process launch is pending.
+    if (executable.is_starting) {
+        return;
+    }
     console.log('Launching game:', props.game);
     if(executable.is_running) {
         emit('stop', {
