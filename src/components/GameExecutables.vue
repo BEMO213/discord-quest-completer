@@ -106,7 +106,13 @@ const filteredExecutables = computed(() => {
         return platformMatches;
     }
 
-    return validExecutables.value;
+    // macOS intentionally falls back to the Windows runner; never offer Linux/macOS
+    // executables as launch targets on Windows.
+    if (isMac) {
+        return validExecutables.value.filter(executable => executable.os === EXECUTABLE_OS.WINDOWS);
+    }
+
+    return [];
 });
 
 const usingCrossPlatformFallback = computed(() => {
@@ -114,7 +120,9 @@ const usingCrossPlatformFallback = computed(() => {
         return false;
     }
 
-    return !validExecutables.value.some(executable => executable.os === currentPlatform);
+    return isMac &&
+        !validExecutables.value.some(executable => executable.os === currentPlatform) &&
+        validExecutables.value.some(executable => executable.os === EXECUTABLE_OS.WINDOWS);
     // return props.game.executables.filter(executable => {
     //     // Filter for current platform only
     //     return executable.os === currentPlatform && !isValidPath(executable.name);
