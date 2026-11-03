@@ -1,5 +1,4 @@
-use discord_sdk::activity::{ActivityBuilder, ActivityKind};
-use std::{fmt::Error, io::ErrorKind, ops::Deref};
+use discord_sdk::activity::ActivityBuilder;
 
 use crate::rpc::{self, Client};
 use serde::Deserialize;
@@ -30,10 +29,32 @@ fn to_app_id(app_id: &str) -> Result<u64, std::num::ParseIntError> {
 }
 
 pub fn parse_activity_json(activity_json: &str) -> Result<ActivityParams, String> {
-    serde_json::from_str(activity_json).map_err(|e| {
+    if activity_json.len() > 16 * 1024 {
+        return Err("Discord activity payload is too large".into());
+    }
+    let activity: ActivityParams = serde_json::from_str(activity_json).map_err(|e| {
         eprintln!("Failed to parse activity JSON: {}", e);
         format!("Failed to parse activity JSON: {}", e)
-    })
+    })?;
+    let app_id = activity.app_id.parse::<u64>()
+        .map_err(|_| "Discord application ID must be a positive integer".to_string())?;
+    if app_id == 0 || app_id > i64::MAX as u64 {
+        return Err("Discord application ID is outside the supported range".into());
+    }
+    for (label, value, limit) in [
+        ("details", activity.details.as_deref(), 1024usize),
+        ("state", activity.state.as_deref(), 1024usize),
+        ("large image key", activity.large_image_key.as_deref(), 256usize),
+        ("large image text", activity.large_image_text.as_deref(), 1024usize),
+    ] {
+        if value.is_some_and(|value| value.len() > limit || value.chars().any(char::is_control)) {
+            return Err(format!("Discord activity {label} is invalid or too long"));
+        }
+    }
+    if activity.timestamp.is_some_and(|value| value < 0) {
+        return Err("Discord activity timestamp cannot be negative".into());
+    }
+    Ok(activity)
 }
 
 pub fn create_activity(activity_json: String) -> Result<CreateActivityResult, String> {
@@ -100,7 +121,7 @@ pub async fn set_activity(activity_json: String) -> Result<Client, String> {
     let app_id: i64 = activity_result.app_id as i64;
     let activity_builder = activity_result.activity;
 
-    let client = rpc::make_client(app_id, rpc::ds::Subscriptions::ACTIVITY).await;
+    let client = rpc::make_client(app_id, rpc::ds::Subscriptions::ACTIVITY).await?;
     client
         .discord
         .update_activity(activity_builder)

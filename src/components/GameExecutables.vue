@@ -38,15 +38,17 @@
 
                 <div class="justify-self-end">
                     <button class="text-white rounded-md px-3 py-1"
+                    :disabled="executable.is_starting"
                     :class="[
                         {
                             'bg-blue-500 hover:bg-blue-600': !gameActions?.isExecutableRunning(executable),
                             'bg-red-500 hover:bg-red-600': gameActions?.isExecutableRunning(executable),
+                            'opacity-60 cursor-wait': executable.is_starting,
                         },
                     ]"
                         @click="handleLaunch(executable)"
                     >
-                        {{ gameActions?.isExecutableRunning(executable) ? 'Stop' : 'Play' }}
+                        {{ executable.is_starting ? 'Starting...' : (gameActions?.isExecutableRunning(executable) ? 'Stop' : 'Play') }}
                     </button>
                 </div>
             </div>
@@ -73,8 +75,20 @@ const emit = defineEmits<{
 const gameActions = inject<GameActionsProvider>(GameActionsKey);
 
 function isValidPath(name: string) {
-    const illegalChars = ['>', '<', ':', '"', '|', '?', '*'];
-    return !illegalChars.some(char => name.includes(char));
+    if (!name || name.length > 1024 || /^[\\/]/.test(name) || /^[A-Za-z]:/.test(name)) {
+        return false;
+    }
+    const components = name.split(/[\\/]/);
+    if (components.some(part =>
+        !part || part === '.' || part === '..' ||
+        /[<>:"|?*]/.test(part) ||
+        part.split('').some(char => char.charCodeAt(0) < 32) ||
+        /[. ]$/.test(part) ||
+        /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(part)
+    )) {
+        return false;
+    }
+    return components.length <= 33;
 }
 
 const validExecutables = computed(() =>
@@ -94,7 +108,13 @@ const filteredExecutables = computed(() => {
         return platformMatches;
     }
 
-    return validExecutables.value;
+    // macOS intentionally falls back to the Windows runner; never offer Linux/macOS
+    // executables as launch targets on Windows.
+    if (isMac) {
+        return validExecutables.value.filter(executable => executable.os === EXECUTABLE_OS.WINDOWS);
+    }
+
+    return [];
 });
 
 const usingCrossPlatformFallback = computed(() => {
@@ -102,7 +122,9 @@ const usingCrossPlatformFallback = computed(() => {
         return false;
     }
 
-    return !validExecutables.value.some(executable => executable.os === currentPlatform);
+    return isMac &&
+        !validExecutables.value.some(executable => executable.os === currentPlatform) &&
+        validExecutables.value.some(executable => executable.os === EXECUTABLE_OS.WINDOWS);
     // return props.game.executables.filter(executable => {
     //     // Filter for current platform only
     //     return executable.os === currentPlatform && !isValidPath(executable.name);
@@ -138,7 +160,10 @@ function getFilename(executable: GameExecutable) {
 }
 
 function handleLaunch(executable: GameExecutable) {
-    // Handle the launch logic here
+    // Ignore repeated clicks while the install or process launch is pending.
+    if (executable.is_starting) {
+        return;
+    }
     console.log('Launching game:', props.game);
     if(executable.is_running) {
         emit('stop', {

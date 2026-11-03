@@ -7,6 +7,8 @@ export interface GameExecutable {
   path?: string;
   segments?: number;
   is_running?: boolean;
+  is_starting?: boolean;
+  process_id?: number;
   is_installed?: boolean;
 }
 export interface Game {

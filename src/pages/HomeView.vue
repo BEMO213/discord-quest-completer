@@ -10,7 +10,6 @@ import IconVerified from '@/components/IconVerified.vue';
 import { isEmpty } from 'lodash-es';
 import GameExecutables from '@/components/GameExecutables.vue';
 import { GameActionsKey } from '@/constants/constants';
-import { path } from '@tauri-apps/api';
 import { emit } from '@tauri-apps/api/event';
 import { useFetchGameList } from '@/composables/fetch-gamelist';
 import { UseFuseOptions } from '@vueuse/integrations';
@@ -172,8 +171,7 @@ function canPlayGame(game: Game | null) {
 }
 
 function isExecutableRunning(executable: GameExecutable) {
-    // Check if the executable is running
-    return executable.is_running ?? false;
+    return Boolean(executable.is_running || executable.is_starting);
 }
 function isGameExecutableInstalled(executable: GameExecutable) {
     // Check if the executable is installed
@@ -201,8 +199,7 @@ async function createDummyGame(game: Game | null, executable: GameExecutable) {
         const payload =  { 
             path: executable.path,
             executable_name: executable.filename,
-            path_len: executable.segments,
-            app_id: Number(gameToInstall.id),
+            app_id: gameToInstall.id,
             display_name: gameToInstall.name,
         }
         console.log(payload);
@@ -219,45 +216,65 @@ async function installAndPlay({game, executable}: {game: Game, executable: GameE
     if (!game) {
         return;
     }
-    const gameCreated = await createDummyGame(game, executable);
+    const gameToInstall = gameList.value.find(item => item.uid === game.uid);
+    const executableItem = gameToInstall?.executables.find(item => item.name === executable.name);
+    if (!gameToInstall || !executableItem || executableItem.is_starting || executableItem.is_running) {
+        return;
+    }
+
+    executableItem.is_starting = true;
+    let gameCreated = false;
+    try {
+        gameCreated = Boolean(await createDummyGame(gameToInstall, executable));
+        if (!gameCreated) {
+            throw new Error('The dummy game could not be created.');
+        }
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('Failed to install dummy game:', error);
+        addLog('error', 'Failed to install dummy game: ' + errorMessage);
+    } finally {
+        executableItem.is_starting = false;
+    }
+
     if (gameCreated) {
-        playGame({game, executable});
-    } else {
-        console.error('Failed to create game');
-        addLog('error', 'Failed to create game');
+        await playGame({game: gameToInstall, executable});
     }
 }
+
 // Play game function
 async function playGame({game, executable}: {game: Game, executable: GameExecutable}) {
     if (!game) {
         return;
     }
-    const gameUid = game.uid;
+    const gameToPlay = gameList.value.find(item => item.uid === game.uid);
+    const executableItem = gameToPlay?.executables.find(item => item.name === executable.name);
+    if (!gameToPlay || !executableItem || executableItem.is_starting || executableItem.is_running) {
+        return;
+    }
+
+    executableItem.is_starting = true;
     try {
-        console.log(`Playing game: ${gameUid}`);
-        addLog('info', `Playing game: ${game.name}`);
-        addLog('info', `Executable: ${executable.name}`);
-        currentlyPlaying.value = game.id;
-        // find the game in the list
-        const gameToPlay = gameList.value.find(g => g.uid === gameUid);
-        const executableItem = gameToPlay?.executables.find(exe => exe.name === executable.name);
-        if (gameToPlay && executableItem) {
-            const payload =  { 
-                name: game.name,
-                path: executable.path,
-                executable_name: executable.filename,
-                path_len: executable.segments,
-                app_id: Number(gameToPlay.id),
-                exec_path: path.join(executable.path!, executable.filename!),
-            } 
-            await invoke('run_background_process', payload);
-            gameToPlay.is_running = true;
-            executableItem.is_running = true; 
-        }
-        // In a real app, this would invoke a Tauri command to launch the game
-       
+        addLog('info', 'Playing game: ' + gameToPlay.name);
+        addLog('info', 'Executable: ' + executable.name);
+
+        const processId = await invoke<number>('run_background_process', {
+            name: gameToPlay.name,
+            path: executable.path,
+            executable_name: executable.filename,
+            app_id: gameToPlay.id,
+        });
+
+        executableItem.process_id = processId;
+        executableItem.is_running = true;
+        gameToPlay.is_running = gameToPlay.executables.some(item => item.is_running);
+        currentlyPlaying.value = gameToPlay.id;
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         console.error('Failed to launch game:', error);
+        addLog('error', 'Failed to launch game: ' + errorMessage);
+    } finally {
+        executableItem.is_starting = false;
     }
 }
 
@@ -266,30 +283,31 @@ async function stopPlaying({game, executable}: {game: Game, executable: GameExec
     if (!game) {
         return;
     }
-    console.log('Stopped playing game');
     const gameUid = game.uid;
-    
-    currentlyPlaying.value = null;
-
     const gameToPlay = gameList.value.find(g => g.uid === gameUid);
     const executableItem = gameToPlay?.executables.find(exe => exe.name === executable.name);
     if (gameToPlay && executableItem) {
+        const processId = executable.process_id ?? executableItem.process_id;
+        if (!processId) {
+            addLog('error', 'No managed process ID was found. Restart the game from this app before stopping it.');
+            return;
+        }
         try {
-            await invoke('stop_process', {
-                exec_name: executable.filename!
-            })
+            await invoke('stop_process', { process_id: processId });
+            delete executableItem.process_id;
+            executableItem.is_running = false;
+            gameToPlay.is_running = gameToPlay.executables.some(exe => exe.is_running);
+            if (!isConnectedToRPC.value && currentlyPlaying.value === gameToPlay.id) {
+                currentlyPlaying.value = gameList.value.find(candidate =>
+                    candidate.executables.some(exe => exe.is_running)
+                )?.id ?? null;
+            }
             addLog('info', `Stopped game process: ${game.name}`);
             addLog('info', `Stopped Executable: ${executable.name}`);
         } catch (error) {
             console.error('Failed to stop game process:', error);
             const errorMessage = (error instanceof Error) ? error.message : String(error);
-            addLog('error', 'Failed to stop game process' + errorMessage);
-            // Even if stopping fails, we still update the state
-            gameToPlay.is_running = false;
-            executableItem.is_running = false;
-        } finally {
-            gameToPlay.is_running = false;
-            executableItem.is_running = false;
+            addLog('error', 'Failed to stop game process: ' + errorMessage);
         }
     }
 }
@@ -299,56 +317,57 @@ function getExecutables(game: Game) {
 }
 
 async function handleTestRPC(game: Game | null) {
-    let state = isConnectedToRPC.value ? 'disconnect' : 'connect';
+    if (isConnecting.value) {
+        addLog('warning', 'Discord RPC connection is still in progress.');
+        return;
+    }
 
-    console.log('Testing RPC for game:', game);
-    if (!game && state === 'connect') {
-        showDialog('no_game_selected');
+    if (!isConnectedToRPC.value) {
+        if (!game) {
+            showDialog('no_game_selected');
+            return;
+        }
+        showDialog('rpc_message_1');
         return;
     }
-    if (state === 'disconnect' || isConnecting.value) {
-        // await invoke('connect_to_discord_rpc_2', { app_id: "0", discord_state: "disconnect" })
-        // invoke('connect_to_discord_rpc_3', {
-        //     activity_json: JSON.stringify({
-        //         app_id: selectedGame.value?.id
-        //     }),
-        //     action: 'disconnect',
-        // })
-        emit('event_disconnect');
-        
-        isConnectedToRPC.value = false;
-        game!.is_running = false;
-        currentlyPlaying.value = null;
-        isConnecting.value = false;
-        return;
+
+    emit('event_disconnect');
+    isConnectedToRPC.value = false;
+
+    // Disconnecting Discord RPC must not mark a still-running dummy process as stopped.
+    for (const item of gameList.value) {
+        item.is_running = item.executables.some(executable => executable.is_running);
     }
-    showDialog('rpc_message_1');
+    currentlyPlaying.value = gameList.value.find(item =>
+        item.executables.some(executable => executable.is_running)
+    )?.id ?? null;
 }
 
 async function continueRPCRisk(game: Game | null) {
     if (!game) {
         return;
     }
-    const gameUid = game.uid;
-    const gameToTest = gameList.value.find(g => g.uid === gameUid);
-    if (gameToTest) {
-        console.log('Testing RPC for game:', gameToTest);
-        isConnecting.value = true;
-        // invoke('connect_to_discord_rpc_2', { app_id: gameToTest.id, discord_state: "connect" })
-        invoke('connect_to_discord_rpc_3', {
-            activity_json: JSON.stringify({
-                app_id: gameToTest.id,
-            }),
-            action: 'connect',
-        })
-        .then(() => {
-            isConnectedToRPC.value = true;
-            gameToTest.is_running = true;
-            currentlyPlaying.value = gameToTest.id;
-            isConnecting.value = false;
-        })
+    const gameToTest = gameList.value.find(g => g.uid === game.uid);
+    if (!gameToTest) {
+        return;
+    }
 
-        hideDialog();
+    isConnecting.value = true;
+    hideDialog();
+    try {
+        await invoke('connect_to_discord_rpc_3', {
+            activity_json: JSON.stringify({ app_id: gameToTest.id }),
+            action: 'connect',
+        });
+        isConnectedToRPC.value = true;
+        currentlyPlaying.value = gameToTest.id;
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('Failed to connect to Discord RPC:', error);
+        addLog('error', 'Failed to connect to Discord RPC: ' + errorMessage);
+        isConnectedToRPC.value = false;
+    } finally {
+        isConnecting.value = false;
     }
 }
 

@@ -1,5 +1,4 @@
 import { Game } from '@/types/types';
-import { fetch, ClientOptions } from '@tauri-apps/plugin-http';
 import { tryOnMounted, useAsyncState } from '@vueuse/core';
 import { ref, watch } from 'vue';
 import { message } from '@tauri-apps/plugin-dialog'; 
@@ -62,8 +61,25 @@ export function useFetchGameList() {
 
     const allFetchDone = ref(false);
 
-    function isValidGameList(data: any): boolean {
-        return Array.isArray(data) && data[0] && 'aliases' in data[0] && 'name' in data[0] && 'executables' in data[0];
+    function isValidGameList(data: unknown): data is Game[] {
+        return Array.isArray(data) && data.length > 0 && data.every((game: any) =>
+            game !== null &&
+            typeof game === 'object' &&
+            typeof game.id === 'string' &&
+            game.id.length > 0 &&
+            typeof game.name === 'string' &&
+            game.name.length > 0 &&
+            Array.isArray(game.executables) &&
+            game.executables.every((executable: any) =>
+                executable !== null &&
+                typeof executable === 'object' &&
+                typeof executable.name === 'string' &&
+                executable.name.length > 0 &&
+                typeof executable.os === 'string'
+            ) &&
+            (game.aliases === undefined ||
+                (Array.isArray(game.aliases) && game.aliases.every((alias: any) => typeof alias === 'string')))
+        );
     }
 
     watch(() => isReadyGH.value, async (newVal) => {
@@ -79,54 +95,48 @@ export function useFetchGameList() {
     });
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    async function fetchGameList() { 
+    async function fetchGameList() {
         allFetchDone.value = false;
+        fetchError.value = null;
         addLog('Fetching game list...');
-        // try fetching from the Github mirror first, then Discord. Use bundled as fallback.
+
         try {
-           await Promise.all([executeGH(), executeBundled()]);
-        } catch {
-            addLog('error', 'Error executing fetch for GitHub mirror or bundled game list.');
+            await Promise.all([executeGH(), executeBundled()]);
+        } catch (error) {
+            addLog('error', 'Error executing game-list fetch: ' + String(error));
         }
 
-        if (errorGH.value) { 
-            fetchError.value = 'Error fetching game list from GitHub mirror.';
-            addLog('error','Error fetching game list from GitHub mirror');
-            await executeDiscord();
-            if (errorDiscord.value) {
-                fetchError.value = 'Error fetching game list from Discord.';
-                addLog('error','Error fetching game list from Discord:');
-                if (errorBundled.value) {
-                    fetchError.value = 'Error fetching bundled game list.';
-                    addLog('error','Error fetching bundled game list:');
-                }
+        const mirrorIsValid = isValidGameList(gameListGHMirror.value);
+        if (!mirrorIsValid) {
+            addLog('warning', 'GitHub mirror returned an unavailable or invalid game list; trying Discord.');
+            try {
+                await executeDiscord();
+            } catch (error) {
+                addLog('error', 'Error fetching game list from Discord: ' + String(error));
             }
         }
-        // silently log error for bundled, as it's the last resort.
-        if (errorBundled.value) {
-            addLog('error','Error fetching bundled game list');
-        }
 
-        if (fetchError.value) {
-            await message('There was an error fetching the latest game list.' + fetchError.value, {
+        const discordIsValid = isValidGameList(gameListFromDiscord.value);
+        const bundledIsValid = isValidGameList(bundledGameList.value);
+
+        if (mirrorIsValid) {
+            gameDB.value = gameListGHMirror.value as Game[];
+            addLog('Using game list from GitHub mirror. ' + gameDB.value.length + ' entries.');
+        } else if (discordIsValid) {
+            gameDB.value = gameListFromDiscord.value as Game[];
+            addLog('Using game list from Discord. ' + gameDB.value.length + ' entries.');
+        } else if (bundledIsValid) {
+            gameDB.value = bundledGameList.value as Game[];
+            addLog('Using bundled game list as fallback. ' + gameDB.value.length + ' entries.');
+        } else {
+            fetchError.value = 'All game-list sources returned unavailable or invalid data.';
+            gameDB.value = [];
+            addLog('error', fetchError.value);
+            await message('There was an error fetching a valid game list. Check your connection and try again.', {
                 title: 'Game List Fetch Error',
                 kind: 'error',
-                buttons: {
-                    ok: 'OK'
-                }
+                buttons: { ok: 'OK' }
             });
-        }
-
-        if (gameListGHMirror.value && gameListGHMirror.value?.length > 0 && isValidGameList(gameListGHMirror.value)) {
-            gameDB.value = gameListGHMirror.value as Game[] || [];
-            addLog('Using game list from GitHub mirror. ' + gameListGHMirror.value.length + ' entries.');
-        } else if (gameListFromDiscord.value && gameListFromDiscord.value?.length > 0 && isValidGameList(gameListFromDiscord.value)) {
-            gameDB.value = gameListFromDiscord.value as Game[] || [];
-            addLog('Using game list from Discord. ' + gameListFromDiscord.value.length + ' entries.');
-        } else {
-            // bundled is always present.
-            addLog('Using bundled game list as fallback.' + bundledGameList.value.length + ' entries.');
-            gameDB.value = bundledGameList.value;
         }
 
         // Set a timeout to delay setting allFetchDone to true, to allow UI to update.
