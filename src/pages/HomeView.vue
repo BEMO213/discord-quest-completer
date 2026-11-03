@@ -217,12 +217,16 @@ async function installAndPlay({game, executable}: {game: Game, executable: GameE
     if (!game) {
         return;
     }
-    const gameCreated = await createDummyGame(game, executable);
-    if (gameCreated) {
-        playGame({game, executable});
-    } else {
-        console.error('Failed to create game');
-        addLog('error', 'Failed to create game');
+    try {
+        const gameCreated = await createDummyGame(game, executable);
+        if (!gameCreated) {
+            throw new Error('The dummy game could not be created.');
+        }
+        await playGame({game, executable});
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('Failed to install and launch game:', error);
+        addLog('error', 'Failed to install and launch game: ' + errorMessage);
     }
 }
 // Play game function
@@ -235,8 +239,7 @@ async function playGame({game, executable}: {game: Game, executable: GameExecuta
         console.log(`Playing game: ${gameUid}`);
         addLog('info', `Playing game: ${game.name}`);
         addLog('info', `Executable: ${executable.name}`);
-        currentlyPlaying.value = game.id;
-        // find the game in the list
+        // Find the game in the list. Do not show it as running until spawn succeeds.
         const gameToPlay = gameList.value.find(g => g.uid === gameUid);
         const executableItem = gameToPlay?.executables.find(exe => exe.name === executable.name);
         if (gameToPlay && executableItem) {
@@ -248,14 +251,16 @@ async function playGame({game, executable}: {game: Game, executable: GameExecuta
             } 
             const processId = await invoke<number>('run_background_process', payload);
             executableItem.process_id = processId;
+            executableItem.is_running = true;
+            gameToPlay.is_running = gameToPlay.executables.some(exe => exe.is_running);
             currentlyPlaying.value = game.id;
-            gameToPlay.is_running = true;
-            executableItem.is_running = true; 
         }
         // In a real app, this would invoke a Tauri command to launch the game
        
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         console.error('Failed to launch game:', error);
+        addLog('error', 'Failed to launch game: ' + errorMessage);
     }
 }
 
@@ -277,8 +282,12 @@ async function stopPlaying({game, executable}: {game: Game, executable: GameExec
             await invoke('stop_process', { process_id: processId });
             delete executableItem.process_id;
             executableItem.is_running = false;
-            gameToPlay.is_running = false;
-            currentlyPlaying.value = null;
+            gameToPlay.is_running = gameToPlay.executables.some(exe => exe.is_running);
+            if (!isConnectedToRPC.value && currentlyPlaying.value === gameToPlay.id) {
+                currentlyPlaying.value = gameList.value.find(candidate =>
+                    candidate.executables.some(exe => exe.is_running)
+                )?.id ?? null;
+            }
             addLog('info', `Stopped game process: ${game.name}`);
             addLog('info', `Stopped Executable: ${executable.name}`);
         } catch (error) {
