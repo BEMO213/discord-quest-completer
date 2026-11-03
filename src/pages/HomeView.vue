@@ -171,8 +171,7 @@ function canPlayGame(game: Game | null) {
 }
 
 function isExecutableRunning(executable: GameExecutable) {
-    // Check if the executable is running
-    return executable.is_running ?? false;
+    return Boolean(executable.is_running || executable.is_starting);
 }
 function isGameExecutableInstalled(executable: GameExecutable) {
     // Check if the executable is installed
@@ -217,50 +216,65 @@ async function installAndPlay({game, executable}: {game: Game, executable: GameE
     if (!game) {
         return;
     }
+    const gameToInstall = gameList.value.find(item => item.uid === game.uid);
+    const executableItem = gameToInstall?.executables.find(item => item.name === executable.name);
+    if (!gameToInstall || !executableItem || executableItem.is_starting || executableItem.is_running) {
+        return;
+    }
+
+    executableItem.is_starting = true;
+    let gameCreated = false;
     try {
-        const gameCreated = await createDummyGame(game, executable);
+        gameCreated = Boolean(await createDummyGame(gameToInstall, executable));
         if (!gameCreated) {
             throw new Error('The dummy game could not be created.');
         }
-        await playGame({game, executable});
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error('Failed to install and launch game:', error);
-        addLog('error', 'Failed to install and launch game: ' + errorMessage);
+        console.error('Failed to install dummy game:', error);
+        addLog('error', 'Failed to install dummy game: ' + errorMessage);
+    } finally {
+        executableItem.is_starting = false;
+    }
+
+    if (gameCreated) {
+        await playGame({game: gameToInstall, executable});
     }
 }
+
 // Play game function
 async function playGame({game, executable}: {game: Game, executable: GameExecutable}) {
     if (!game) {
         return;
     }
-    const gameUid = game.uid;
+    const gameToPlay = gameList.value.find(item => item.uid === game.uid);
+    const executableItem = gameToPlay?.executables.find(item => item.name === executable.name);
+    if (!gameToPlay || !executableItem || executableItem.is_starting || executableItem.is_running) {
+        return;
+    }
+
+    executableItem.is_starting = true;
     try {
-        console.log(`Playing game: ${gameUid}`);
-        addLog('info', `Playing game: ${game.name}`);
-        addLog('info', `Executable: ${executable.name}`);
-        // Find the game in the list. Do not show it as running until spawn succeeds.
-        const gameToPlay = gameList.value.find(g => g.uid === gameUid);
-        const executableItem = gameToPlay?.executables.find(exe => exe.name === executable.name);
-        if (gameToPlay && executableItem) {
-            const payload =  { 
-                name: game.name,
-                path: executable.path,
-                executable_name: executable.filename,
-                app_id: gameToPlay.id,
-            } 
-            const processId = await invoke<number>('run_background_process', payload);
-            executableItem.process_id = processId;
-            executableItem.is_running = true;
-            gameToPlay.is_running = gameToPlay.executables.some(exe => exe.is_running);
-            currentlyPlaying.value = game.id;
-        }
-        // In a real app, this would invoke a Tauri command to launch the game
-       
+        addLog('info', 'Playing game: ' + gameToPlay.name);
+        addLog('info', 'Executable: ' + executable.name);
+
+        const processId = await invoke<number>('run_background_process', {
+            name: gameToPlay.name,
+            path: executable.path,
+            executable_name: executable.filename,
+            app_id: gameToPlay.id,
+        });
+
+        executableItem.process_id = processId;
+        executableItem.is_running = true;
+        gameToPlay.is_running = gameToPlay.executables.some(item => item.is_running);
+        currentlyPlaying.value = gameToPlay.id;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error('Failed to launch game:', error);
         addLog('error', 'Failed to launch game: ' + errorMessage);
+    } finally {
+        executableItem.is_starting = false;
     }
 }
 
