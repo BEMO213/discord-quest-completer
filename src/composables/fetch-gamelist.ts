@@ -1,5 +1,4 @@
 import { Game } from '@/types/types';
-import { fetch, ClientOptions } from '@tauri-apps/plugin-http';
 import { tryOnMounted, useAsyncState } from '@vueuse/core';
 import { ref, watch } from 'vue';
 import { message } from '@tauri-apps/plugin-dialog'; 
