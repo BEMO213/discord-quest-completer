@@ -42,6 +42,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
+      - name: Refresh Rust dependency lockfile
+        run: cargo update --manifest-path src-tauri/Cargo.toml
       
       - name: Cache Cargo registry
         uses: actions/cache@v4
