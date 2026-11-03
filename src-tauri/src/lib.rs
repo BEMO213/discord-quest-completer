@@ -237,6 +237,11 @@ fn copy_runner_without_overwrite(
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             let existing_path = ensure_regular_file_within(destination, allowed_root)?;
+            let existing_metadata = fs::metadata(&existing_path)
+                .map_err(|e| format!("Failed to inspect existing executable: {e}"))?;
+            if existing_metadata.len() != bytes.len() as u64 {
+                return Err("A different file already exists; it was not overwritten".into());
+            }
             let existing = fs::read(&existing_path)
                 .map_err(|e| format!("Failed to read existing executable: {e}"))?;
             if existing != bytes {
