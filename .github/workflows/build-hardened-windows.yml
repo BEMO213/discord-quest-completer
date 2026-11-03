@@ -1,0 +1,75 @@
+name: Build hardened Windows installers
+
+on:
+  push:
+    branches:
+      - security/hardened-windows-build
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build and test Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.3
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Windows bundlers
+        shell: pwsh
+        run: choco install wixtoolset nsis --no-progress --yes
+
+      - name: Install frontend dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Refresh Rust dependency lockfile
+        run: cargo update --manifest-path src-tauri/Cargo.toml
+
+      - name: Build the Windows game runner
+        run: cargo build --manifest-path src-win/Cargo.toml --release
+
+      - name: Copy runner into Tauri resources
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/resources | Out-Null
+          Copy-Item src-win/target/release/src-win.exe src-tauri/resources/src-win.exe -Force
+
+      - name: Run Rust security tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build frontend and type-check
+        run: pnpm build
+
+      - name: Build NSIS and MSI installers
+        run: pnpm exec tauri build --bundles nsis,msi
+
+      - name: Upload Windows installers and lockfile snapshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: discord-quest-completer-windows-installer
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/Cargo.lock
+            pnpm-lock.yaml
+          if-no-files-found: error
+          retention-days: 14

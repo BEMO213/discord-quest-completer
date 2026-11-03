@@ -73,8 +73,20 @@ const emit = defineEmits<{
 const gameActions = inject<GameActionsProvider>(GameActionsKey);
 
 function isValidPath(name: string) {
-    const illegalChars = ['>', '<', ':', '"', '|', '?', '*'];
-    return !illegalChars.some(char => name.includes(char));
+    if (!name || name.length > 1024 || /^[\\/]/.test(name) || /^[A-Za-z]:/.test(name)) {
+        return false;
+    }
+    const components = name.split(/[\\/]/);
+    if (components.some(part =>
+        !part || part === '.' || part === '..' ||
+        /[<>:"|?*]/.test(part) ||
+        part.split('').some(char => char.charCodeAt(0) < 32) ||
+        /[. ]$/.test(part) ||
+        /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(part)
+    )) {
+        return false;
+    }
+    return components.length <= 33;
 }
 
 const validExecutables = computed(() =>

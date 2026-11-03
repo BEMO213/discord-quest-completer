@@ -10,7 +10,6 @@ import IconVerified from '@/components/IconVerified.vue';
 import { isEmpty } from 'lodash-es';
 import GameExecutables from '@/components/GameExecutables.vue';
 import { GameActionsKey } from '@/constants/constants';
-import { path } from '@tauri-apps/api';
 import { emit } from '@tauri-apps/api/event';
 import { useFetchGameList } from '@/composables/fetch-gamelist';
 import { UseFuseOptions } from '@vueuse/integrations';
@@ -201,8 +200,7 @@ async function createDummyGame(game: Game | null, executable: GameExecutable) {
         const payload =  { 
             path: executable.path,
             executable_name: executable.filename,
-            path_len: executable.segments,
-            app_id: Number(gameToInstall.id),
+            app_id: gameToInstall.id,
             display_name: gameToInstall.name,
         }
         console.log(payload);
@@ -246,11 +244,11 @@ async function playGame({game, executable}: {game: Game, executable: GameExecuta
                 name: game.name,
                 path: executable.path,
                 executable_name: executable.filename,
-                path_len: executable.segments,
-                app_id: Number(gameToPlay.id),
-                exec_path: path.join(executable.path!, executable.filename!),
+                app_id: gameToPlay.id,
             } 
-            await invoke('run_background_process', payload);
+            const processId = await invoke<number>('run_background_process', payload);
+            executableItem.process_id = processId;
+            currentlyPlaying.value = game.id;
             gameToPlay.is_running = true;
             executableItem.is_running = true; 
         }
@@ -266,30 +264,27 @@ async function stopPlaying({game, executable}: {game: Game, executable: GameExec
     if (!game) {
         return;
     }
-    console.log('Stopped playing game');
     const gameUid = game.uid;
-    
-    currentlyPlaying.value = null;
-
     const gameToPlay = gameList.value.find(g => g.uid === gameUid);
     const executableItem = gameToPlay?.executables.find(exe => exe.name === executable.name);
     if (gameToPlay && executableItem) {
+        const processId = executable.process_id ?? executableItem.process_id;
+        if (!processId) {
+            addLog('error', 'No managed process ID was found. Restart the game from this app before stopping it.');
+            return;
+        }
         try {
-            await invoke('stop_process', {
-                exec_name: executable.filename!
-            })
+            await invoke('stop_process', { process_id: processId });
+            delete executableItem.process_id;
+            executableItem.is_running = false;
+            gameToPlay.is_running = false;
+            currentlyPlaying.value = null;
             addLog('info', `Stopped game process: ${game.name}`);
             addLog('info', `Stopped Executable: ${executable.name}`);
         } catch (error) {
             console.error('Failed to stop game process:', error);
             const errorMessage = (error instanceof Error) ? error.message : String(error);
-            addLog('error', 'Failed to stop game process' + errorMessage);
-            // Even if stopping fails, we still update the state
-            gameToPlay.is_running = false;
-            executableItem.is_running = false;
-        } finally {
-            gameToPlay.is_running = false;
-            executableItem.is_running = false;
+            addLog('error', 'Failed to stop game process: ' + errorMessage);
         }
     }
 }
