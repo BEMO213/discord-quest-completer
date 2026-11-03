@@ -303,56 +303,57 @@ function getExecutables(game: Game) {
 }
 
 async function handleTestRPC(game: Game | null) {
-    let state = isConnectedToRPC.value ? 'disconnect' : 'connect';
+    if (isConnecting.value) {
+        addLog('warning', 'Discord RPC connection is still in progress.');
+        return;
+    }
 
-    console.log('Testing RPC for game:', game);
-    if (!game && state === 'connect') {
-        showDialog('no_game_selected');
+    if (!isConnectedToRPC.value) {
+        if (!game) {
+            showDialog('no_game_selected');
+            return;
+        }
+        showDialog('rpc_message_1');
         return;
     }
-    if (state === 'disconnect' || isConnecting.value) {
-        // await invoke('connect_to_discord_rpc_2', { app_id: "0", discord_state: "disconnect" })
-        // invoke('connect_to_discord_rpc_3', {
-        //     activity_json: JSON.stringify({
-        //         app_id: selectedGame.value?.id
-        //     }),
-        //     action: 'disconnect',
-        // })
-        emit('event_disconnect');
-        
-        isConnectedToRPC.value = false;
-        game!.is_running = false;
-        currentlyPlaying.value = null;
-        isConnecting.value = false;
-        return;
+
+    emit('event_disconnect');
+    isConnectedToRPC.value = false;
+
+    // Disconnecting Discord RPC must not mark a still-running dummy process as stopped.
+    for (const item of gameList.value) {
+        item.is_running = item.executables.some(executable => executable.is_running);
     }
-    showDialog('rpc_message_1');
+    currentlyPlaying.value = gameList.value.find(item =>
+        item.executables.some(executable => executable.is_running)
+    )?.id ?? null;
 }
 
 async function continueRPCRisk(game: Game | null) {
     if (!game) {
         return;
     }
-    const gameUid = game.uid;
-    const gameToTest = gameList.value.find(g => g.uid === gameUid);
-    if (gameToTest) {
-        console.log('Testing RPC for game:', gameToTest);
-        isConnecting.value = true;
-        // invoke('connect_to_discord_rpc_2', { app_id: gameToTest.id, discord_state: "connect" })
-        invoke('connect_to_discord_rpc_3', {
-            activity_json: JSON.stringify({
-                app_id: gameToTest.id,
-            }),
-            action: 'connect',
-        })
-        .then(() => {
-            isConnectedToRPC.value = true;
-            gameToTest.is_running = true;
-            currentlyPlaying.value = gameToTest.id;
-            isConnecting.value = false;
-        })
+    const gameToTest = gameList.value.find(g => g.uid === game.uid);
+    if (!gameToTest) {
+        return;
+    }
 
-        hideDialog();
+    isConnecting.value = true;
+    hideDialog();
+    try {
+        await invoke('connect_to_discord_rpc_3', {
+            activity_json: JSON.stringify({ app_id: gameToTest.id }),
+            action: 'connect',
+        });
+        isConnectedToRPC.value = true;
+        currentlyPlaying.value = gameToTest.id;
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('Failed to connect to Discord RPC:', error);
+        addLog('error', 'Failed to connect to Discord RPC: ' + errorMessage);
+        isConnectedToRPC.value = false;
+    } finally {
+        isConnecting.value = false;
     }
 }
 
