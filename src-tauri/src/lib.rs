@@ -447,6 +447,7 @@ fn launch_executable_path(game_dir: &Path, executable_name: &str) -> PathBuf {
 
 #[tauri::command(rename_all = "snake_case")]
 async fn run_background_process(
+    handle: AppHandle,
     process_registry: State<'_, ProcessRegistry>,
     name: &str,
     path: &str,
@@ -467,6 +468,30 @@ async fn run_background_process(
         &launch_executable_path(&game_dir, executable_name),
         &game_dir,
     )?;
+
+    // Only launch the exact runner binary bundled with this application.
+    let runner_template = resolve_runner_template(&handle)?;
+    let runner_metadata = fs::symlink_metadata(&runner_template)
+        .map_err(|e| format!("Failed to inspect bundled runner: {e}"))?;
+    if is_link_or_reparse_point(&runner_metadata)
+        || !runner_metadata.is_file()
+        || runner_metadata.len() == 0
+        || runner_metadata.len() > 50 * 1024 * 1024
+    {
+        return Err("Bundled runner is not a valid regular file".into());
+    }
+    let executable_metadata = fs::metadata(&executable)
+        .map_err(|e| format!("Failed to inspect selected executable: {e}"))?;
+    if executable_metadata.len() != runner_metadata.len() {
+        return Err("Selected executable does not match the bundled runner".into());
+    }
+    let runner_bytes = fs::read(&runner_template)
+        .map_err(|e| format!("Failed to read bundled runner: {e}"))?;
+    let selected_bytes = fs::read(&executable)
+        .map_err(|e| format!("Failed to read selected executable: {e}"))?;
+    if selected_bytes != runner_bytes {
+        return Err("Selected executable does not match the bundled runner".into());
+    }
 
     let mut children = process_registry.children.lock()
         .map_err(|_| "Process registry is unavailable".to_string())?;
