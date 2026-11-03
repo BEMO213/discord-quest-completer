@@ -24,12 +24,12 @@
       },
       "csp": {
         "default-src": "'self' customprotocol: asset:",
-        "connect-src": "ipc: http://ipc.localhost", 
+        "connect-src": "ipc: http://ipc.localhost",
         "img-src": "'self' asset: http://asset.localhost blob: data:",
         "style-src": "'unsafe-inline' 'self'"
       }
     }
-  }, 
+  },
   "bundle": {
     "active": true,
     "targets": "all",
@@ -40,8 +40,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "resources/*"
-    ]
+    "resources": {
+      "resources/*": "data/"
+    }
   }
 }
