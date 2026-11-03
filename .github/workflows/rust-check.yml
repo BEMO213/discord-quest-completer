@@ -57,20 +57,14 @@ jobs:
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-index-
 
-      - name: Get Game List
+      - name: Validate bundled game list
         shell: bash
-        env:
-          GAME_LIST_URL: ${{ secrets.GAME_LIST_URL }}
         run: |
-          curl -L -o src/assets/gamelist.json $GAME_LIST_URL
-          if [ ! -f src/assets/gamelist.json ]; then
-            echo "Failed to download game list"
-            exit 1
-          fi
           if [ ! -s src/assets/gamelist.json ]; then
-            echo "Game list is empty"
+            echo "Bundled game list is missing or empty"
             exit 1
           fi
+          python -c "import json; data=json.load(open('src/assets/gamelist.json', encoding='utf-8')); assert isinstance(data, list) and len(data) > 0"
       
       # Build src-win
       - name: Build src-win project x86_64 binary
